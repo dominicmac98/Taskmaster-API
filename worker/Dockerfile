@@ -9,4 +9,4 @@ RUN python -m pip install --no-cache-dir --only-binary=:all: --require-hashes -r
 COPY app.py config.yml ./
 USER 10001:10001
 EXPOSE 5000
-CMD ["gunicorn", "--worker-tmp-dir", "/tmp", "--bind", "0.0.0.0:5000", "app:app"]
+CMD ["gunicorn", "--worker-tmp-dir", "/tmp", "--control-socket", "/tmp/gunicorn.ctl", "--bind", "0.0.0.0:5000", "app:app"]
