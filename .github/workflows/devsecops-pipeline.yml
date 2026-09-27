@@ -120,6 +120,7 @@ jobs:
           npm audit --prefix api --audit-level=high
           npm sbom --prefix api --sbom-format cyclonedx > reports/node-sbom.cdx.json
           cp api/package.json api/package-lock.json scan-input/node/
+          cp -a api/node_modules scan-input/node/
           docker build --tag taskmaster-worker-depcheck ./worker
           docker run --rm --entrypoint python taskmaster-worker-depcheck \
             -m pip freeze > scan-input/python/requirements.txt
@@ -147,7 +148,9 @@ jobs:
           name: dependency-check-${{ github.run_number }}
           path: |
             reports/
-            scan-input/
+            scan-input/node/package.json
+            scan-input/node/package-lock.json
+            scan-input/python/requirements.txt
           if-no-files-found: warn
           retention-days: 30
 
@@ -174,10 +177,10 @@ jobs:
 
       - name: Wait for API and worker health
         run: |
-          for endpoint in http://localhost:8080/health http://localhost:5000/health; do
+          for endpoint in http://localhost:8080/health; do
             ready=false
             for attempt in $(seq 1 60); do
-              if curl --fail --silent --show-error "$endpoint"; then
+              if curl --fail --silent --show-error --connect-timeout 2 --max-time 5 "$endpoint"; then
                 ready=true
                 break
               fi
@@ -188,6 +191,11 @@ jobs:
               exit 1
             fi
           done
+
+      - name: Check the private worker health endpoint
+        run: |
+          docker compose -f compose.ci.yml exec -T worker python -c \
+            'import json, urllib.request; assert json.load(urllib.request.urlopen("http://127.0.0.1:5000/health", timeout=5))["status"] == "ok"'
 
       - name: Verify task and reminder behavior plus non-root containers
         run: |
