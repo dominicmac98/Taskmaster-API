@@ -32,6 +32,11 @@ function auth(req, res, next) {
   });
 }
 
+// Give the baseline spider a live entry point at the service root.
+app.get('/', function (req, res) {
+  res.redirect('/health');
+});
+
 app.get('/health', function (req, res) {
   res.json({ status: 'ok', time: moment().format() });
 });
