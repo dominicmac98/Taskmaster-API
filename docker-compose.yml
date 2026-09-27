@@ -1,13 +1,55 @@
-version: "2"
+# Isolated practice lab; the demonstration login is not production authentication.
 services:
   api:
     build: ./api
-    ports: ["3000:3000"]
-    env_file: .env.example
-    depends_on: [mongo, worker]
+    ports:
+      - "127.0.0.1:8080:3000"
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      MONGO_URL: mongodb://mongo:27017/taskmaster
+      WORKER_URL: http://worker:5000
+      JWT_SECRET: ${JWT_SECRET:?Set an ephemeral JWT_SECRET for the lab}
+      DEMO_AUTH_ENABLED: "true"
+    depends_on:
+      - mongo
+      - worker
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+
   worker:
     build: ./worker
-    ports: ["5000:5000"]
-    env_file: .env.example
+    image: taskmaster-worker:lab
+    ports:
+      - "127.0.0.1:5000:5000"
+    environment:
+      WEBHOOK_URL: http://webhook:9000/hook
+    depends_on:
+      - webhook
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+
+  webhook:
+    build: ./worker
+    image: taskmaster-worker:lab
+    command: ["python", "/fixture/webhook_fixture.py"]
+    volumes:
+      - ./webhook_fixture.py:/fixture/webhook_fixture.py:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+
   mongo:
-    image: mongo:3.6
+    image: mongo:8.0.32-noble
+
+networks:
+  default:
+    internal: true
