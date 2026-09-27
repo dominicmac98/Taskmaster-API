@@ -1,66 +1,75 @@
-# Lab 4 remediation record
+# Lab 4 notes
 
-## Baseline
+Original repository: [rkinsella-emu/Taskmaster-API](https://github.com/rkinsella-emu/Taskmaster-API).
 
-Baseline commit: `bbb8f92241b492cbcc039886edff40972db129ce`.
-[Run 2](https://github.com/dominicmac98/Taskmaster-API/actions/runs/36338336695) produced the Dependency-Check and ZAP reports on September 27, 2026.
+## First scan
 
-Dependency-Check reported **17 critical, 53 high, 37 medium/moderate and 9 low findings** across the dependency report. Counts normalize severity capitalization and treat each reported dependency/advisory entry as a finding; they are not a deduplicated count of CVEs or a claim that every CPE match is reachable.
+[Run 2](https://github.com/dominicmac98/Taskmaster-API/actions/runs/36338336695) used commit `bbb8f92`.
 
-ZAP reported seven alert types: incomplete CSP (medium); missing CORP, Permissions-Policy, nosniff, and an X-Powered-By disclosure (low); plus two informational cacheability classifications.
+Dependency-Check reported:
 
-The Snyk baseline was blocked by the missing SNYK_TOKEN secret. Do not label it as a completed Snyk scan.
+- 17 critical findings
+- 53 high findings
+- 37 medium or moderate findings
+- 9 low findings
 
-## Package changes
+These are entries in the report. The same vulnerability can appear for more than one package.
 
-Unused libraries were removed after reviewing both application entry points. This reduces the installed attack surface while preserving the app's task and reminder functions.
+ZAP reported five alert types above the informational level. They involved missing or incomplete security headers and the server showing its software name. It also reported two informational alert types.
 
-| Original Node package | Before | Remediation |
-| --- | --- | --- |
-| express | 4.16.0 | 5.2.1; includes current body-parser transitively |
-| jsonwebtoken | 8.2.0 | 9.0.3; explicit HS256 validation |
-| mongoose | 5.0.10 | 9.10.2; callback operations migrated to promises |
-| axios | 0.18.0 | Replaced with Node's fetch and a timeout |
-| body-parser | 1.18.2 | Direct dependency replaced by express.json |
-| lodash | 4.17.4 | Deep merge replaced by an allowlist; owner comes from token |
-| moment | 2.19.1 | Replaced by Date.toISOString |
-| ejs | 2.5.7 | Removed; not imported or configured |
-| handlebars | 4.0.11 | Removed; not imported |
-| js-yaml | 3.10.0 | Removed from Node; not imported |
-| minimist | 1.2.0 | Removed; not imported |
-| node-fetch | 2.6.0 | Removed; native fetch used |
-| serialize-javascript | 1.5.0 | Removed; not imported |
-| mocha / chai | 5.0.0 / 4.1.2 | Replaced with Node's built-in test/assert modules |
+Snyk did not scan during this run because the token had not been saved yet.
 
-| Original Python package | Before | Remediation |
-| --- | --- | --- |
-| Flask | 0.12.2 | 3.1.3 |
-| PyYAML | 3.12 | 6.0.3; safe_load |
-| requests | 2.19.1 | 2.34.2; timeouts, redirect rejection, status validation |
-| gunicorn | 19.7.1 | 26.2.0 |
-| Jinja2 / Werkzeug / urllib3 | 2.10 / 0.14.1 / 1.22 | Current transitive versions locked in requirements.txt |
-| Pillow | 5.2.0 | Removed; no image processing |
-| cryptography | 2.1.4 | Removed; no cryptography API use |
-| paramiko | 2.4.0 | Removed; no SSH client |
-| SQLAlchemy | 1.2.0 | Removed; no SQL database |
-| boto3 | 1.4.4 | Removed; no AWS SDK use |
+## Node package changes
 
-Fresh locks resolve and pin the full remaining dependency trees. No vulnerability suppression file is used by Snyk or Dependency-Check.
+- Express: 4.16.0 to 5.2.1
+- jsonwebtoken: 8.2.0 to 9.0.3
+- Mongoose: 5.0.10 to 9.10.2
+- Axios and node-fetch were replaced with Node's built-in fetch.
+- The direct body-parser entry was removed because Express can read JSON requests. Body-parser is still included through Express.
+- Lodash was removed. The app now copies only the task fields it needs.
+- Moment was replaced with JavaScript's built-in date functions.
+- EJS, Handlebars, js-yaml, minimist, and serialize-javascript were removed because the app was not using them.
+- Mocha and Chai were replaced with Node's built-in test tools.
 
-## Runtime changes
+The exact installed versions are saved in `api/package-lock.json`.
 
-- Node 8.9.0 -> 24.21.0; Python 3.6.15 -> 3.12.14; MongoDB 3.6 -> 8.0.32.
-- API and worker run as non-root with read-only filesystems, dropped Linux capabilities and no-new-privileges.
-- Only the API publishes a loopback port (8080) through a bridge network. The worker, database and webhook remain on the internal network with no published ports. The API has outbound access through its bridge.
-- Missing JWT_SECRET fails startup. The demo login is disabled unless explicitly enabled; tokens expire in 15 minutes.
-- Responses include nosniff, CSP, CORP, Permissions-Policy, Referrer-Policy, DENY framing and no-store. X-Powered-By is disabled.
-- Task ownership cannot be overridden through the request body. Reminder requests also verify ownership.
-- Raw internal exceptions are not returned to clients; malformed inputs and oversized bodies are rejected.
+## Python package changes
 
-## Verification and remaining limits
+- Flask: 0.12.2 to 3.1.3
+- PyYAML: 3.12 to 6.0.3, with safe loading for YAML
+- Requests: 2.19.1 to 2.34.2
+- Gunicorn: 19.7.1 to 26.2.0
+- Jinja2: 2.10 to 3.1.6
+- Werkzeug: 0.14.1 to 3.1.8
+- urllib3: 1.22 to 2.8.0
+- Pillow, cryptography, Paramiko, SQLAlchemy, and boto3 were removed because the worker was not using them.
 
-Node tests, Python tests, and the CI smoke test validate the behavior changed during migration. CI records the API/worker numeric user IDs. Scans must be evaluated from the actual run and its artifacts; dependency data changes over time.
+All 14 Python packages are listed with exact versions and hashes in `worker/requirements.txt`.
 
-Rule 10049 remains visible as INFO in the ZAP report because non-storable responses are expected for this API. Security header warnings are not suppressed. Passive unauthenticated ZAP coverage does not establish authenticated endpoint safety. The demo login and unauthenticated internal worker/database are lab limitations; this configuration is not suitable for public deployment.
+## Other changes
 
-Snyk completion depends on the repository owner saving SNYK_TOKEN and rerunning the pipeline. No fully green run or zero-Snyk-finding result is claimed before that happens.
+Node was updated from 8.9.0 to 24.21.0, Python from 3.6.15 to 3.12.14, and MongoDB from 3.6 to 8.0.32.
+
+The app and worker run without root access. Their filesystems are read-only. The worker and database do not have ports open on the host computer. The app is only available through the local port 8080.
+
+The app checks task ownership, uses expiring login tokens, adds security headers, and hides detailed internal errors. Reminder requests also check who owns the task.
+
+## Final results
+
+[Run 4, attempt 2](https://github.com/dominicmac98/Taskmaster-API/actions/runs/36340386940) used commit `4929cad`. All four jobs passed.
+
+- Snyk checked 98 Node dependencies and 14 Python dependencies. It reported no high or critical vulnerabilities.
+- Dependency-Check reported zero findings and no analysis errors.
+- ZAP had no alerts above the informational level. One result remained because private responses use `Cache-Control: no-store`.
+- Five Node tests and four Python tests passed.
+- The smoke test passed for task storage, task ownership, and reminders.
+
+Only the two Snyk jobs were rerun in attempt 2 after the token was saved. GitHub kept the passing Dependency-Check and ZAP results from attempt 1.
+
+## Limits
+
+Snyk was set to check high and critical findings. The ZAP scan was a passive scan without login. These results do not mean every possible security issue was tested.
+
+Dependency-Check's optional Sonatype OSS Index check was disabled because its credentials were not set up. The other main checks completed.
+
+The demo login does not verify a password, and the internal worker and database still depend on network isolation. This is a local lab setup.
