@@ -42,7 +42,7 @@ jobs:
         if: matrix.component == 'node'
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '22'
+          node-version: '24.21.0'
 
       - name: Download and verify Snyk CLI
         run: |
@@ -52,11 +52,12 @@ jobs:
           echo "b0baee4fa4d7d11b7df927a1046cf8137a8a89fafac8101a45c3c0e0777ddc35  $RUNNER_TEMP/snyk" | sha256sum --check
           chmod +x "$RUNNER_TEMP/snyk"
           mkdir -p reports
+          chmod 777 reports
 
-      - name: Resolve Node dependencies without lifecycle scripts
+      - name: Install locked Node dependencies without lifecycle scripts
         if: matrix.component == 'node'
         working-directory: api
-        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Build the installed Python dependency environment
         if: matrix.component == 'python'
@@ -109,17 +110,23 @@ jobs:
       - name: Install Node tooling
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '22'
+          node-version: '24.21.0'
 
       - name: Prepare complete dependency inventories
         run: |
           mkdir -p scan-input/node scan-input/python reports
-          npm install --prefix api --package-lock-only --ignore-scripts --no-audit --no-fund
+          npm ci --prefix api --ignore-scripts --no-audit --no-fund
+          npm test --prefix api
+          npm audit --prefix api --audit-level=high
+          npm sbom --prefix api --sbom-format cyclonedx > reports/node-sbom.cdx.json
           cp api/package.json api/package-lock.json scan-input/node/
           docker build --tag taskmaster-worker-depcheck ./worker
           docker run --rm --entrypoint python taskmaster-worker-depcheck \
             -m pip freeze > scan-input/python/requirements.txt
           test -s scan-input/python/requirements.txt
+          docker run --rm --volume "$GITHUB_WORKSPACE/worker:/tests:ro" \
+            --workdir /tests --entrypoint python taskmaster-worker-depcheck \
+            -m unittest -v test_app
 
       - name: Scan Node and Python dependencies
         uses: dependency-check/Dependency-Check_Action@1e54355a8b4c8abaa8cc7d0b70aa655a3bb15a6c
@@ -182,12 +189,24 @@ jobs:
             fi
           done
 
+      - name: Verify task and reminder behavior plus non-root containers
+        run: |
+          python3 smoke_test.py | tee reports/smoke-test.txt
+          for service in api worker; do
+            uid="$(docker compose -f compose.ci.yml exec -T "$service" id -u)"
+            echo "$service runs as UID $uid" | tee -a reports/non-root.txt
+            test "$uid" -ne 0
+          done
+
       - name: Run ZAP passive baseline scan
         run: |
+          # Rule 10049 describes caching; no-store is intentional for private task data.
+          # Keep it visible as INFO. Every other new warning still fails this job.
+          printf '10049\tINFO\tIntentional no-store policy for API responses\n' > reports/zap/rules.tsv
           docker run --rm --network host \
             --volume "$GITHUB_WORKSPACE/reports/zap:/zap/wrk:rw" \
             ghcr.io/zaproxy/zaproxy:stable \
-            zap-baseline.py -t http://localhost:8080 \
+            zap-baseline.py -t http://localhost:8080 -c rules.tsv \
             -r zap-report.html -J zap-report.json -w zap-report.md
 
       - name: Capture startup and runtime evidence
