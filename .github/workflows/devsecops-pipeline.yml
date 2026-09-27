@@ -1,0 +1,211 @@
+name: DevSecOps pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  snyk:
+    name: Snyk - ${{ matrix.component }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [node, python]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check Snyk credential
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: |
+          if [ -z "$SNYK_TOKEN" ]; then
+            echo "::error::Save SNYK_TOKEN in Settings > Secrets and variables > Actions, then rerun this workflow."
+            exit 1
+          fi
+
+      - name: Install Node tooling
+        if: matrix.component == 'node'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+
+      - name: Download and verify Snyk CLI
+        run: |
+          curl --fail --silent --show-error --location \
+            https://github.com/snyk/cli/releases/download/v1.1307.4/snyk-linux \
+            --output "$RUNNER_TEMP/snyk"
+          echo "b0baee4fa4d7d11b7df927a1046cf8137a8a89fafac8101a45c3c0e0777ddc35  $RUNNER_TEMP/snyk" | sha256sum --check
+          chmod +x "$RUNNER_TEMP/snyk"
+          mkdir -p reports
+
+      - name: Resolve Node dependencies without lifecycle scripts
+        if: matrix.component == 'node'
+        working-directory: api
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+
+      - name: Build the installed Python dependency environment
+        if: matrix.component == 'python'
+        run: docker build --tag taskmaster-worker-sca ./worker
+
+      - name: Snyk Node scan
+        if: matrix.component == 'node'
+        working-directory: api
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: |
+          "$RUNNER_TEMP/snyk" test --file=package.json --dev \
+            --severity-threshold=high \
+            --json-file-output=../reports/snyk-node.json
+
+      - name: Snyk Python scan
+        if: matrix.component == 'python'
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: |
+          docker run --rm --env SNYK_TOKEN \
+            --volume "$GITHUB_WORKSPACE:/project" \
+            --volume "$RUNNER_TEMP/snyk:/usr/local/bin/snyk:ro" \
+            --workdir /project/worker --entrypoint snyk taskmaster-worker-sca \
+            test --file=requirements.txt --package-manager=pip --command=python3 \
+            --severity-threshold=high \
+            --json-file-output=/project/reports/snyk-python.json
+
+      - name: Save Snyk evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: snyk-${{ matrix.component }}-${{ github.run_number }}
+          path: |
+            reports/
+            api/package-lock.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  dependency-check:
+    name: OWASP Dependency-Check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Node tooling
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+
+      - name: Prepare complete dependency inventories
+        run: |
+          mkdir -p scan-input/node scan-input/python reports
+          npm install --prefix api --package-lock-only --ignore-scripts --no-audit --no-fund
+          cp api/package.json api/package-lock.json scan-input/node/
+          docker build --tag taskmaster-worker-depcheck ./worker
+          docker run --rm --entrypoint python taskmaster-worker-depcheck \
+            -m pip freeze > scan-input/python/requirements.txt
+          test -s scan-input/python/requirements.txt
+
+      - name: Scan Node and Python dependencies
+        uses: dependency-check/Dependency-Check_Action@1e54355a8b4c8abaa8cc7d0b70aa655a3bb15a6c
+        with:
+          project: Taskmaster-API
+          path: scan-input
+          format: ALL
+          out: reports/dependency-check
+          args: >-
+            --enableExperimental
+            --disableAssembly
+            --failOnCVSS 7
+
+      - name: Save Dependency-Check evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dependency-check-${{ github.run_number }}
+          path: |
+            reports/
+            scan-input/
+          if-no-files-found: warn
+          retention-days: 30
+
+  zap:
+    name: ZAP baseline
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Create an ephemeral lab credential
+        run: |
+          jwt_value="$(openssl rand -hex 32)"
+          echo "::add-mask::$jwt_value"
+          echo "JWT_SECRET=$jwt_value" >> "$GITHUB_ENV"
+          mkdir -p reports/zap
+          chmod 777 reports/zap
+
+      - name: Build and start the local lab
+        run: docker compose -f compose.ci.yml up --build --detach
+
+      - name: Wait for API and worker health
+        run: |
+          for endpoint in http://localhost:8080/health http://localhost:5000/health; do
+            ready=false
+            for attempt in $(seq 1 60); do
+              if curl --fail --silent --show-error "$endpoint"; then
+                ready=true
+                break
+              fi
+              sleep 2
+            done
+            if [ "$ready" != true ]; then
+              echo "::error::Service did not become healthy: $endpoint"
+              exit 1
+            fi
+          done
+
+      - name: Run ZAP passive baseline scan
+        run: |
+          docker run --rm --network host \
+            --volume "$GITHUB_WORKSPACE/reports/zap:/zap/wrk:rw" \
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap-baseline.py -t http://localhost:8080 \
+            -r zap-report.html -J zap-report.json -w zap-report.md
+
+      - name: Capture startup and runtime evidence
+        if: always()
+        run: |
+          mkdir -p reports
+          docker compose -f compose.ci.yml ps --all > reports/compose-status.txt
+          docker compose -f compose.ci.yml logs --no-color > reports/compose-logs.txt
+
+      - name: Save ZAP evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: zap-baseline-${{ github.run_number }}
+          path: reports/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Stop the lab
+        if: always()
+        run: docker compose -f compose.ci.yml down --volumes --remove-orphans
