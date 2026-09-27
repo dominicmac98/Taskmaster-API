@@ -51,7 +51,7 @@ Fresh locks resolve and pin the full remaining dependency trees. No vulnerabilit
 
 - Node 8.9.0 -> 24.21.0; Python 3.6.15 -> 3.12.14; MongoDB 3.6 -> 8.0.32.
 - API and worker run as non-root with read-only filesystems, dropped Linux capabilities and no-new-privileges.
-- Loopback-only published ports and an internal Compose network isolate the practice services.
+- Only the API publishes a loopback port (8080) through a bridge network. The worker, database and webhook remain on the internal network with no published ports. The API has outbound access through its bridge.
 - Missing JWT_SECRET fails startup. The demo login is disabled unless explicitly enabled; tokens expire in 15 minutes.
 - Responses include nosniff, CSP, CORP, Permissions-Policy, Referrer-Policy, DENY framing and no-store. X-Powered-By is disabled.
 - Task ownership cannot be overridden through the request body. Reminder requests also verify ownership.

@@ -22,7 +22,7 @@ python3 smoke_test.py
 docker compose down --volumes
 ```
 
-The API and worker bind to loopback ports 8080 and 5000. The database and test webhook have no published ports. The internal network prevents external outbound access at runtime. The webhook is a local test receiver so the complete reminder path can be exercised without a third-party service.
+The API binds only to loopback port 8080 on a separate bridge network. The worker, database and test webhook have no published ports and stay on the internal network, which blocks their external outbound access. The API also joins that internal network to reach them; its bridge network still permits outbound access. The webhook is a local test receiver so the complete reminder path can be exercised without a third-party service.
 
 ## Security workflow
 

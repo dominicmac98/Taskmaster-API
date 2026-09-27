@@ -11,6 +11,7 @@ services:
       WORKER_URL: http://worker:5000
       JWT_SECRET: ${JWT_SECRET:?Set an ephemeral JWT_SECRET for the lab}
       DEMO_AUTH_ENABLED: "true"
+    networks: [default, edge]
     depends_on:
       - mongo
       - worker
@@ -23,8 +24,6 @@ services:
   worker:
     build: ./worker
     image: taskmaster-worker:lab
-    ports:
-      - "127.0.0.1:5000:5000"
     environment:
       WEBHOOK_URL: http://webhook:9000/hook
     depends_on:
@@ -53,3 +52,4 @@ services:
 networks:
   default:
     internal: true
+  edge: {}
