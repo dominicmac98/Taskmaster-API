@@ -1,31 +1,20 @@
 {
   "name": "taskmaster-api",
-  "version": "1.4.2",
-  "description": "TaskMaster REST API (legacy)",
+  "version": "1.4.3",
+  "description": "TaskMaster REST API security practice lab",
   "main": "src/server.js",
-  "engines": { "node": "8.x", "npm": "5.x" },
+  "engines": {
+    "node": "24.x",
+    "npm": ">=11"
+  },
   "scripts": {
     "start": "node src/server.js",
-    "test": "mocha test --recursive"
+    "test": "node --test security.test.js"
   },
   "dependencies": {
-    "axios": "0.18.0",
-    "body-parser": "1.18.2",
-    "ejs": "2.5.7",
-    "express": "4.16.0",
-    "handlebars": "4.0.11",
-    "js-yaml": "3.10.0",
-    "jsonwebtoken": "8.2.0",
-    "lodash": "4.17.4",
-    "minimist": "1.2.0",
-    "moment": "2.19.1",
-    "mongoose": "5.0.10",
-    "node-fetch": "2.6.0",
-    "serialize-javascript": "1.5.0"
-  },
-  "devDependencies": {
-    "mocha": "5.0.0",
-    "chai": "4.1.2"
+    "express": "5.2.1",
+    "jsonwebtoken": "9.0.3",
+    "mongoose": "9.10.2"
   },
   "license": "UNLICENSED"
 }
